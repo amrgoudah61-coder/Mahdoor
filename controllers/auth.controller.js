@@ -6,7 +6,6 @@ const crypto = require('crypto')
 require('dotenv').config()
 const asyncHandler = require('express-async-handler')
 
-
 // signup user and sending otp to user email 
 const signUp = asyncHandler(async (req, res) => {
     const { error } = validateSignupUser(req.body)
@@ -19,21 +18,21 @@ const signUp = asyncHandler(async (req, res) => {
         return res.status(400).json({ success: false, msg: 'User was registered, you can log in directly' })
     }
 
-    // hash password
     const password = await bcrypt.hash(req.body.password, +process.env.USER_PASS_SALT)
 
-    // generate OTP
     const otp = crypto.randomInt(100000, 1000000).toString()
+    // console.log(" OTP Code is: ", otp);
+
     const hashedOtp = await bcrypt.hash(otp, +process.env.OTP_SALT)
     const otpExpires = new Date(Date.now() + 5 * 60 * 1000)
-
+    const roleM = "manager"
     user = new userModel({
         name: req.body.name,
         age: req.body.age,
         gender: req.body.gender,
         email: req.body.email,
         password: password,
-        role: req.body.role,
+        role: roleM,
         emailOtp: hashedOtp,
         emailOtpExpires: otpExpires,
         restaurant_Id: req.body.restaurant_Id
@@ -41,8 +40,9 @@ const signUp = asyncHandler(async (req, res) => {
     await user.save()
 
     try {
-        await sendOtp(req.body.email, otp) // await so failures are actually caught
+        await sendOtp(req.body.email, otp)
     } catch (err) {
+        console.log("Email sending error details: ", err); // سيطبع سبب الفشل بالتحديد في التيرمينال
         return res.status(500).json({
             success: false,
             msg: 'Account created but we could not send the OTP email. Please use re-send OTP.',
@@ -55,9 +55,7 @@ const signUp = asyncHandler(async (req, res) => {
     })
 })
 
-
-
-// confirm email with the otp whose sent to user email
+// confirm email with the otp
 const confirmEmailOTP = asyncHandler(async (req, res) => {
     const { email, OTP } = req.body
 
@@ -70,7 +68,6 @@ const confirmEmailOTP = asyncHandler(async (req, res) => {
         return res.status(400).json({ success: false, msg: 'user not found' })
     }
 
-    // make sure this name matches your schema exactly
     if (user.isEmailVerifified) {
         return res.status(400).json({ success: false, msg: 'user email was already confirmed' })
     }
@@ -87,14 +84,12 @@ const confirmEmailOTP = asyncHandler(async (req, res) => {
     user.isEmailVerifified = true
     user.emailOtp = null
     user.emailOtpExpires = null
-    await user.save() // <-- this was missing, so nothing was written to the DB
+    await user.save()
 
     return res.status(200).json({ success: true, msg: 'verification succeeded' })
 })
 
-
-
-// resend OTP to user email 
+// resend OTP
 const reSendOTP = asyncHandler(async (req, res) => {
     const { email } = req.body
     if (!email) {
@@ -120,6 +115,7 @@ const reSendOTP = asyncHandler(async (req, res) => {
     try {
         await sendOtp(email, otp)
     } catch (err) {
+        console.log("Email resending error details: ", err);
         return res.status(500).json({ success: false, msg: 'Could not send the OTP email, try again.' })
     }
 
@@ -130,24 +126,28 @@ const reSendOTP = asyncHandler(async (req, res) => {
 })
 
 // login and generate token
-
 const login = asyncHandler(async (req, res) => {
     const { error } = validateLoginUser(req.body)
     if (error) {
-        res.status(400).json(`msg :${error.details[0].message}`)
+        return res.status(400).json({ msg: error.details[0].message })
     }
     let user = await userModel.findOne({ email: req.body.email })
     if (!user) {
-        res.status(404).json({ msg: 'email or password was wrong ' })
+        return res.status(404).json({ msg: 'email or password was wrong' })
     }
     const isMatch = await bcrypt.compare(req.body.password, user.password)
     if (!isMatch) {
-
-        res.status(400).json({ msg: "email or password was wrong" })
+        return res.status(400).json({ msg: "email or password was wrong" })
     }
-    const token = jwt.sign({ id: user._id, name: user.name, role: user.role }, process.env.SECRETE_KEY, { expiresIn: "2w" })
+
+    const token = jwt.sign(
+        { id: user._id, name: user.name, role: user.role, restaurant_Id: user.restaurant_Id },
+        process.env.SECRETE_KEY,
+        { expiresIn: "2w" }
+    )
+
     const { password, ...other } = user._doc
-    res.status(200).json({ msg: "login successfully", profile: { ...other, token } })
+    return res.status(200).json({ msg: "login successfully", profile: { ...other, token } })
 })
 
 module.exports = { signUp, login, confirmEmailOTP, reSendOTP }
